@@ -1,5 +1,6 @@
-import numpy as np
+﻿import numpy as np
 import base64
+import json
 import cv2
 
 from drowsiness_processor.extract_points.point_extractor import PointsExtractor
@@ -10,33 +11,46 @@ from drowsiness_processor.reports.main import DrowsinessReports
 from drowsiness_processor.phone_detection.detector import PhoneDetector
 from drowsiness_processor.phone_detection.processing import PhoneUseEstimator
 from drowsiness_processor.phone_detection.visualization import PhoneVisualizer
+from drowsiness_processor.head_pose.orientation import HeadOrientationClassifier
+from drowsiness_processor.alert.traffic_light import TrafficLightSystem, TrafficLightConfig, extract_phone_boxes
+from drowsiness_processor.alert.alarm import AlarmPlayer
+from drowsiness_processor.visualization.traffic_light_visualizer import TrafficLightVisualizer
 
 
 class DrowsinessDetectionSystem:
+    PHONE_CLASS_IDS = None
+
     def __init__(self):
         self.points_extractor = PointsExtractor()
         self.points_processing = PointsProcessing()
         self.features_processing = FeaturesDrowsinessProcessing()
         self.visualizer = ReportVisualizer()
         self.reports = DrowsinessReports('drowsiness_processor/reports/august/drowsiness_report.csv')
+
         self.phone_detector = PhoneDetector()
         self.phone_estimator = PhoneUseEstimator()
         self.phone_visualizer = PhoneVisualizer()
-        self.json_report: dict = {}
+
+        self.json_report = {}
+        self._drowsiness_report = {}
+
+        if not hasattr(self.points_extractor.face_mesh, "last_landmarks"):
+            raise RuntimeError("Falta el hook 'last_landmarks' en FaceMeshProcessor.")
+        self.head_orientation = HeadOrientationClassifier()
+        self.traffic_light = TrafficLightSystem(
+            TrafficLightConfig(yellow_after_s=1.0, red_after_s=2.5),
+            alarm=AlarmPlayer(cooldown_s=1.2)
+        )
+        self.traffic_light_visualizer = TrafficLightVisualizer()
 
     def run(self, picture_base64: str):
-        # decode base64
         picture_bytes = base64.b64decode(picture_base64)
-        # convert bytes to OpenCV image
         picture = cv2.imdecode(np.frombuffer(picture_bytes, np.uint8), cv2.IMREAD_COLOR)
         return self.frame_processing(picture)
 
     def frame_processing(self, face_image: np.ndarray):
         key_points, control_process, sketch = self.points_extractor.process(face_image)
 
-        # phone detection is intentionally NOT gated behind control_process:
-        # a distracted driver looking away is exactly the case where the
-        # face mesh can fail while a phone is still visible in frame.
         head_points: dict = {}
         drowsiness_features_processed: dict = {}
         if control_process:
@@ -58,5 +72,36 @@ class DrowsinessDetectionSystem:
             sketch = self.visualizer.visualize_all_reports(sketch, drowsiness_features_processed)
 
         self.reports.main(drowsiness_features_processed)
-        self.json_report = self.reports.generate_json_report(drowsiness_features_processed)
+        self._drowsiness_report = self.reports.generate_json_report(drowsiness_features_processed)
+
+        snapshot = self.distraction_monitoring(face_image, phone_boxes)
+        self.json_report = self._with_distraction(self._drowsiness_report, snapshot)
+
         return face_image, sketch, self.json_report
+
+    def distraction_monitoring(self, frame: np.ndarray, phone_boxes=None):
+        h, w = frame.shape[:2]
+        landmarks = self.points_extractor.face_mesh.last_landmarks
+        pose = self.head_orientation.classify(landmarks, w, h)
+        phone_boxes_norm = extract_phone_boxes(phone_boxes, class_ids=self.PHONE_CLASS_IDS)
+        snapshot = self.traffic_light.update(pose, phone_boxes_norm)
+        self.traffic_light_visualizer.draw(frame, snapshot)
+        return snapshot
+
+    @staticmethod
+    def _with_distraction(report, snapshot):
+        extra = snapshot.to_dict()
+        if isinstance(report, str):
+            try:
+                data = json.loads(report)
+            except ValueError:
+                data = {}
+            data['distraction'] = extra
+            return json.dumps(data)
+        data = dict(report) if isinstance(report, dict) else {}
+        data['distraction'] = extra
+        return data
+
+    def recalibrate_head_pose(self):
+        self.head_orientation.reset_calibration()
+        self.traffic_light.reset()

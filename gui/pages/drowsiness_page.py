@@ -106,7 +106,7 @@ class Drowsiness:
         self.page.update()
 
     def run_detection(self):
-        uri = "ws://127.0.0.1:8000/ws"
+        uri = "ws://localhost:8000/ws"
         cap = cv2.VideoCapture(0)
         try:
             asyncio.run(self.process_video(uri, cap))

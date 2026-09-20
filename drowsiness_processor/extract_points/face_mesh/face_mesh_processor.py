@@ -97,13 +97,19 @@ class FaceMeshProcessor:
         self.inference = FaceMeshInference()
         self.extractor = FaceMeshExtractor()
         self.drawer = FaceMeshDrawer()
+        self.last_landmarks = None  # NUEVO: (478, 3) x,y,z normalizados, o None
 
     def process(self, face_image: np.ndarray, draw: bool = True) -> Tuple[dict, bool, np.ndarray]:
         h, w, _ = face_image.shape
         sketch = np.zeros((h, w, 3), dtype=np.uint8)
         success, face_mesh_info = self.inference.process(face_image)
+        self.last_landmarks = None  # NUEVO
         if not success:
             return {}, success, sketch
+
+        # NUEVO: guardar landmarks para el clasificador de orientacion de cabeza
+        self.last_landmarks = np.array([[pt.x, pt.y, pt.z] for pt in face_mesh_info.multi_face_landmarks[0].landmark],
+                                       dtype=np.float32)
 
         face_points = self.extractor.extract_points(face_image, face_mesh_info)
         points = {

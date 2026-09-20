@@ -4,7 +4,7 @@ import numpy as np
 from ultralytics import YOLO
 
 # COCO class id for "cell phone" in the stock 80-class dataset that the
-# pretrained yolov8n.pt weights are already trained on. Because this class
+# pretrained yolov8s.pt weights are already trained on. Because this class
 # is already covered, no custom dataset or training run is required to get
 # phone detection working: the pretrained checkpoint is downloaded
 # automatically by ultralytics the first time PhoneDetector() runs.
@@ -21,8 +21,8 @@ class PhoneDetector:
     pipeline).
     """
 
-    def __init__(self, model_path: str = "yolov8n.pt", confidence_threshold: float = 0.45,
-                 image_size: int = 320):
+    def __init__(self, model_path: str = "yolov8s.pt", confidence_threshold: float = 0.55,
+                 image_size: int = 480):
         self.model = YOLO(model_path)
         self.confidence_threshold = confidence_threshold
         self.image_size = image_size
